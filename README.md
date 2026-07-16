@@ -5,6 +5,7 @@ A comprehensive learning repository and production-hardened guide for provisioni
 ## 📖 Project Documentation Index
 * 🚀 Read the [Complete Installation Guide](Installation/README.md)
 * 🌐 Review [Advanced CNI & CSI Storage Architecture](storage-networking/README.md)
+* ⚙️ Review [Systemd Services & YAML Schema Architectures](CONFIG_STRUCTURE.md)
 * 🔍 Open the [Diagnostic Verification Runbook](TROUBLESHOOTING.md)
 
 ## 🗺️ 1. Project Overview & Topology & Visual Architectures & Layouts
