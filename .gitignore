@@ -1,0 +1,10 @@
+# Ignore administrative cluster keys & configuration states
+*.conf
+*.key
+*.pem
+kubeconfig
+
+# Ignore local system logs and text backups
+*.log
+*.txt
+.tmp/
