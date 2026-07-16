@@ -199,6 +199,246 @@ sudo systemctl enable --now kubelet
 
 ---
 
-### Phase 4: Spin up the Cluster Head (Run on MASTER Node ONLY)
+## 🚀 Part 4: Advanced Workload & Storage Deployments
 
-#### Step 4.1: Trigger Initialization
+This section details how to execute advanced workload strategies, configure cluster network firewalls, and provision dynamic cluster storage volumes within an immutable container runtime design.
+
+---
+
+### 1. Declarative Pod Application Setup
+Deploying workloads natively requires a declarative approach. We establish a scalable backend architecture utilizing a multi-replica NGINX deployment.
+
+#### Step 1.1: Create the Workload Manifest (`app-deployment.yaml`)
+This deployment deploys two isolated pods across our worker nodes, managing lifecycle states via `containerd`.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: production-web-layer
+  namespace: default
+  labels:
+    app.kubernetes.io/name: web-frontend
+    tier: production
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      run: web-engine-core
+  template:
+    metadata:
+      labels:
+        run: web-engine-core
+    spec:
+      containers:
+      - name: nginx-core
+        image: nginx:1.25.4-alpine
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "100m"
+          limits:
+            memory: "128Mi"
+            cpu: "200m"
+```
+
+#### Step 1.2: Apply and Expose the Workload via NodePort
+```bash
+# Deploy the manifest to your containerd nodes
+kubectl apply -f app-deployment.yaml
+
+# Create a permanent Layer 4 routing boundary across your physical node ports
+kubectl expose deployment production-web-layer --type=NodePort --port=80 --target-port=80 --name=web-ingress-svc
+```
+
+---
+
+### 2. Network Isolation Rule Enforcement (Calico / Canal Plugins Only)
+By default, the Kubernetes network fabric is completely non-isolated—any pod can transmit packets to any other pod. If you implement **Calico** or the **Canal Hybrid**, you can apply standard zero-trust firewall configurations.
+
+#### Scenario Example
+We want to completely lock down our `production-web-layer` application. It must reject all inbound cluster traffic *unless* the requesting source explicitly contains the security badge validation label `access: verified`.
+
+#### Step 2.1: Write the Isolation Manifest (`secure-policy.yaml`)
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: zero-trust-frontend-ingress
+  namespace: default
+spec:
+  podSelector:
+    matchLabels:
+      run: web-engine-core
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          access: verified
+    ports:
+    - protocol: TCP
+      port: 80
+```
+
+#### Step 2.2: Enforce and Test the Firewall Policy
+```bash
+# Activate the zero-trust ingress firewall rule
+kubectl apply -f secure-policy.yaml
+
+# TEST A: Spin up an unapproved container (This request will hang and time out)
+kubectl run standard-test-pod --image=alpine --rm -it -- restart=Never -- wget -qO- http://web-ingress-svc
+
+# TEST B: Spin up a secure, authorized container (This request will succeed instantly)
+kubectl run secure-test-pod --image=alpine --labels="access=verified" --rm -it -- restart=Never -- wget -qO- http://web-ingress-svc
+```
+
+---
+
+### 3. Container Storage Interface (CSI) Integration
+Because our local `containerd` file layers are ephemeral, any cluster restart or pod crash will instantly erase application data. To preserve state, we configure a cloud-native dynamic block storage tier utilizing the **Amazon EBS CSI Driver**.
+
+#### Step 3.1: Initialize the AWS EBS CSI Core Infrastructure
+Execute this command on your control plane master node to deploy the necessary storage controllers, daemonsets, and API schemas straight out of the Kubernetes SIG registry:
+
+```bash
+kubectl apply -k "://github.com"
+```
+*(Prerequisite Note: Ensure the underlying IAM Role attached to your EC2 worker nodes contains standard policy permissions allowing them to execute `ec2:CreateVolume`, `ec2:AttachVolume`, and `ec2:DeleteVolume` API calls).*
+
+#### Step 3.2: Create a Dynamic StorageClass (`storage-class.yaml`)
+This registers a template instructing the AWS CSI driver to automatically provision high-performance `gp3` Solid State Disks whenever a user creates a volume claim.
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: enterprise-fast-gp3
+provisioner: ebs.csi.aws.com
+volumeBindingMode: WaitForFirstConsumer
+allowVolumeExpansion: true
+parameters:
+  type: gp3
+  iops: "3000"
+  throughput: "125"
+```
+```bash
+# Register the storage template to the API server
+kubectl apply -f storage-class.yaml
+```
+
+#### Step 3.3: Request a Persistent Volume Slice (`pvc.yaml`)
+Instead of manually cutting AWS disk volumes, developers submit a PersistentVolumeClaim (PVC). The CSI driver intercepts this request and provisions a matching disk asset.
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: database-storage-allocation
+  namespace: default
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: enterprise-fast-gp3
+  resources:
+    requests:
+      storage: 15Gi
+```
+```bash
+# Submit the storage allocation slice request
+kubectl apply -f pvc.yaml
+```
+
+#### Step 3.4: Deploy a Stateful Workload Mounting the Cloud Disk
+Create a manifest named `stateful-app.yaml`. This launches a stateful database layer that automatically mounts the requested 15Gi AWS SSD straight inside its `/var/lib/mysql` storage directory.
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: database-core-layer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: backend-database
+  template:
+    metadata:
+      labels:
+        app: backend-database
+    spec:
+      containers:
+      - name: mysql-engine
+        image: mysql:8.3.0
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "ClusterEngineeringSecret2026"
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: physical-aws-ebs-disk
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: physical-aws-ebs-disk
+        persistentVolumeClaim:
+          claimName: database-storage-allocation
+```
+```bash
+# Finalize deployment by spinning up your stateful database layer
+kubectl apply -f stateful-app.yaml
+```
+
+---
+
+## 🔍 Part 5: Diagnostic Verification Runbook
+
+Use this verification runbook to check your multi-node cluster topology, network allocations, and storage health.
+
+### 1. Compute Node Fabric Assessment
+Verify that every master and worker instance successfully communicates via the `containerd` runtime socket:
+
+```bash
+kubectl get nodes -o wide
+```
+#### Expected Healthy Output Template
+```text
+NAME               STATUS   ROLES           AGE   VERSION   INTERNAL-IP     OS-IMAGE                  KERNEL-VERSION                 CONTAINER-RUNTIME
+ip-172-31-39-176   Ready    control-plane   2h    v1.30.0   172.31.39.176   Amazon Linux 2023.4.12    6.1.72-96.166.amzn2023.x86_64  containerd://1.6.2
+ip-172-31-18-184   Ready    <none>          2h    v1.30.0   172.31.18-184   Amazon Linux 2023.4.12    6.1.72-96.166.amzn2023.x86_64  containerd://1.6.2
+```
+* **Troubleshooting Action:** If a node reports `NotReady`, execute `sudo systemctl status containerd` and `journalctl -u kubelet -n 100 --no-pager` directly on that specific node to locate failing cgroup initialization loops.
+
+### 2. Network Interface Allocation Audit
+Verify that your CoreDNS systems and CNI infrastructure pods have successfully acquired valid internal IP allocations from your configured subnet pool:
+
+```bash
+kubectl get pods -n kube-system -o wide
+```
+#### Expected Healthy Output Template
+```text
+NAME                                       READY   STATUS    RESTARTS   AGE    IP              NODE               NOMINATED NODE   READINESS GATES
+coredns-7c65d6cfc9-abc12                   1/1     Running   0          115m   10.244.0.2      ip-172-31-39-176   <none>           <none>
+kube-flannel-ds-lkn72                     1/1     Running   0          112m   172.31.18.184   ip-172-31-18-184   <none>           <none>
+```
+* **Troubleshooting Action:** If CoreDNS remains permanently `Pending`, your CNI network configuration failed. Execute `kubectl describe pod -n kube-system -l k8s-app=kube-dns` to check if a valid network overlay exists.
+
+### 3. Dynamic Storage Lifecycle Validation
+Verify that your AWS EBS CSI driver has dynamically provisioned your storage volume:
+
+```bash
+kubectl get pvc,pv -n default
+```
+#### Expected Healthy Output Template
+```text
+NAME                                                 STATUS   VOLUME                                     CAPACITY   ACCESS MODES   STORAGECLASS         AGE
+pvc/database-storage-allocation                       Bound    pvc-78f9b1c2-3d4e-5f6a-7b8c-9d0e1f2a3b4c   15Gi       RWO            enterprise-fast-gp3  4m
+
+NAME                                                 CAPACITY   ACCESS MODES   RECLAIM POLICY   STATUS   CLAIM                                  STORAGECLASS         REASON   AGE
+pv/pvc-78f9b1c2-3d4e-5f6a-7b8c-9d0e1f2a3b4c          15Gi       RWO            Delete           Bound    default/database-storage-allocation    enterprise-fast-gp3           3m58s
+
+* **Troubleshooting Action:** If your claim status remains stuck in a Pending state, your CSI driver cannot talk to the AWS infrastructure API. Run `kubectl logs -n kube-system -l app=ebs-csi-controller -c csi-provisioner --tail=50` to inspect underlying permission errors or blocked cloud routing calls.
+
+
