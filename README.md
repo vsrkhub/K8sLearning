@@ -198,6 +198,96 @@ sudo systemctl enable --now kubelet
 ```
 
 ---
+### Part 3.5: Enterprise CNI Deep-Dive & Decision Engine
+
+Choosing the correct CNI determines how pods communicate, how network security policies are enforced, and how much CPU overhead your system consumes.
+
+#### 1. Flannel (Simplicity / Low Overhead)
+*   **When to use:** Local development labs, test clusters, IoT edge nodes, or environments where advanced security filtering is unnecessary.
+*   **How it works:** It uses standard Linux VXLAN encapsulation to build a simple Layer 3 overlay network. It distributes a flat IP pool (`10.244.0.0/16`) globally across nodes.
+*   **Verdict:** Extremely fast to install and very lightweight, but it **completely lacks Network Policy support**. It cannot restrict pod-to-pod communication.
+
+#### 2. Calico (Enterprise Performance & Zero-Trust)
+*   **When to use:** Production deployments, multitenant setups, compliance-heavy infrastructures, and high-throughput environments.
+*   **How it works:** By default, it operates without packet encapsulation by leveraging Border Gateway Protocol (BGP). This turns every Kubernetes node into an active router, avoiding encapsulation performance loss.
+*   **Verdict:** Features a world-class, built-in **Network Policy engine** allowing you to create micro-segmented firewalls, but requires more advanced networking knowledge to troubleshoot.
+
+#### 3. The Canal Hybrid (Flannel Speed + Calico Firewalls)
+*   **When to use:** Teams that want Flannel's dead-simple, conflict-free VXLAN network pathways but still require Calico’s rigorous security policy enforcement engine.
+*   **Verdict:** Best of both worlds, though it runs two discrete networking daemons per node, slightly increasing baseline memory footprint.
+
+---
+
+### Part 4.5: NetApp Trident CSI Integration
+
+While the cloud-native AWS EBS CSI maps volumes to virtual public clouds, enterprise datacenters rely on **NetApp Trident** to map persistent storage folders directly from physical NetApp ONTAP SAN/NAS storage arrays into `containerd` container sandboxes.
+
+#### Step 1: Install the Trident Orchestrator via Helm
+Run this command from your master control plane to install the Trident controller onto your node nodes using the official repo:
+
+```bash
+# Add the NetApp Trident Helm repository
+helm repo add netapp-trident https://github.io
+
+# Install the storage orchestrator system
+helm install trident netapp-trident/trident-operator --namespace trident --create-namespace
+```
+
+#### Step 2: Define the Physical Backend Storage Array (`backend.json`)
+Trident requires a secure mapping specification telling it how to authenticate against your physical SAN/NAS environment. Create a file named `trident-backend.json`:
+
+```json
+{
+    "version": 1,
+    "storageDriverName": "ontap-nas",
+    "managementLIF": "10.0.10.50",
+    "dataLIF": "10.0.20.60",
+    "svm": "k8s_storage_virtual_machine",
+    "username": "trident_cluster_user",
+    "password": "SecurePasswordSecure2026",
+    "labels": {"performance": "gold", "cost": "enterprise"}
+}
+```
+```bash
+# Push the backend connection mapping configuration to the Trident orchestrator
+tridentctl create backend -f trident-backend.json -n trident
+```
+
+#### Step 3: Register the NetApp StorageClass (`netapp-sc.yaml`)
+Create your declarative storage tier layout mapped directly to the NetApp ONTAP backend:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: netapp-gold-nas
+provisioner: csi.trident.netapp.io
+parameters:
+  backendType: "ontap-nas"
+  media: "ssd"
+  provisioningType: "thin"
+```
+```bash
+kubectl apply -f netapp-sc.yaml
+```
+
+#### Step 4: Issue a PersistentVolumeClaim to the NetApp Array (`netapp-pvc.yaml`)
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: production-file-share
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: netapp-gold-nas
+  resources:
+    requests:
+      storage: 100Gi
+```
+```bash
+kubectl apply -f netapp-pvc.yaml
+```
 
 ## 🚀 Part 4: Advanced Workload & Storage Deployments
 
