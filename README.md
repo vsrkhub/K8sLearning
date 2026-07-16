@@ -3,7 +3,7 @@
 A comprehensive learning repository and production-hardened guide for provisioning a multi-node Kubernetes cluster.
 
 ## 📖 Project Documentation Index
-* 🚀 Read the [Complete Installation Guide](installation/README.md)
+* 🚀 Read the [Complete Installation Guide](Installation/README.md)
 * 🌐 Review [Advanced CNI & CSI Storage Architecture](storage-networking/README.md)
 * 🔍 Open the [Diagnostic Verification Runbook](TROUBLESHOOTING.md)
 
